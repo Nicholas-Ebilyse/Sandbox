@@ -22,9 +22,11 @@ const PAC_KEYWORDS = {
 };
 // Document AI / Vertex AI configuration
 // Make sure the corresponding API is enabled in your Google Cloud project.
-const AI_PROJECT_ID = 'YOUR_PROJECT_ID';
-const AI_LOCATION = 'YOUR_PROCESSOR_LOCATION'; // e.g. 'eu' or 'us'
-const AI_PROCESSOR_ID = 'YOUR_PROCESSOR_ID';
+// Values are read from the script properties so credentials aren't hard-coded.
+const scriptProps = PropertiesService.getScriptProperties();
+const AI_PROJECT_ID = scriptProps.getProperty('AI_PROJECT_ID');
+const AI_LOCATION = scriptProps.getProperty('AI_LOCATION'); // e.g. 'eu' or 'us'
+const AI_PROCESSOR_ID = scriptProps.getProperty('AI_PROCESSOR_ID');
 
 // --- Main Processing Function ---
 
@@ -685,6 +687,11 @@ function determinePacValue(pdfContent) {
  * Calls Document AI or Vertex AI to extract structured invoice data.
  */
 function parseInvoiceWithAI(pdfBlob, documentType) {
+  if (!AI_PROJECT_ID || !AI_LOCATION || !AI_PROCESSOR_ID) {
+    Logger.log('AI configuration missing. Set AI_PROJECT_ID, AI_LOCATION, and AI_PROCESSOR_ID in script properties.');
+    return mapAIResponseToData({}, documentType);
+  }
+
   const url = `https://documentai.googleapis.com/v1/projects/${AI_PROJECT_ID}/locations/${AI_LOCATION}/processors/${AI_PROCESSOR_ID}:process`;
   const payload = {
     rawDocument: {
@@ -699,9 +706,19 @@ function parseInvoiceWithAI(pdfBlob, documentType) {
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
-  const response = UrlFetchApp.fetch(url, options);
-  const aiResponse = JSON.parse(response.getContentText());
-  return mapAIResponseToData(aiResponse, documentType);
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() !== 200) {
+      Logger.log(`AI service error ${response.getResponseCode()}: ${response.getContentText()}`);
+      return mapAIResponseToData({}, documentType);
+    }
+    const aiResponse = JSON.parse(response.getContentText());
+    return mapAIResponseToData(aiResponse, documentType);
+  } catch (e) {
+    Logger.log(`Error calling AI service: ${e.message}`);
+    return mapAIResponseToData({}, documentType);
+  }
 }
 
 /**
