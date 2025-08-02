@@ -4,7 +4,7 @@
  */
 
 // --- Configuration ---
-const CONFIG = getConfig();
+let CONFIG; // Loaded at runtime via helper
 // NEW: Central list of client prefixes for easy updating.
 const CLIENT_PREFIXES = ["MR OU MME", "MME", "MR."];
 // NEW: Keywords for PAC identification
@@ -20,6 +20,7 @@ const PAC_KEYWORDS = {
  * Processes incoming emails, categorizes them, extracts data, and logs the activity.
  */
 function processIncomingInvoices() {
+  CONFIG = getConfig();
   Logger.log("--- Starting Invoice Processing Run ---");
 
   Logger.log(`Attempting to find Gmail label with name: "${CONFIG.GMAIL_LABEL_TO_PROCESS}"`);
