@@ -21,6 +21,24 @@ const PAC_KEYWORDS = {
   "Fenêtres": ["FENETRE", "VOLET"]
 };
 
+const MONTH_NAMES = Object.freeze({
+  "janvier": "01",
+  "fevrier": "02",
+  "février": "02",
+  "mars": "03",
+  "avril": "04",
+  "mai": "05",
+  "juin": "06",
+  "juillet": "07",
+  "aout": "08",
+  "août": "08",
+  "septembre": "09",
+  "octobre": "10",
+  "novembre": "11",
+  "decembre": "12",
+  "décembre": "12"
+});
+
 // --- Main Processing Function ---
 
 /**
@@ -192,20 +210,6 @@ function processIncomingInvoices() {
  */
 function extractDataFromPdfContent(pdfContent) {
   const data = {};
-  const monthNames = {
-    "janvier": "01",
-    "février": "02",
-    "mars": "03",
-    "avril": "04",
-    "mai": "05",
-    "juin": "06",
-    "juillet": "07",
-    "août": "08",
-    "septembre": "09",
-    "octobre": "10",
-    "novembre": "11",
-    "décembre": "12"
-  };
 
   // Helper function to find a value that appears anywhere after a label
   function findValueAfterLabel(label, content) {
@@ -272,7 +276,7 @@ function extractDataFromPdfContent(pdfContent) {
     const parts = dateStringFr.split(' ');
     if (parts.length === 3) {
       const day = parts[0];
-      const month = monthNames[parts[1].toLowerCase()];
+      const month = MONTH_NAMES[parts[1].toLowerCase()];
       const year = parts[2];
       if (day && month && year) {
         data["Échéance"] = convertDateToYYYYMMDD(`${day}/${month}/${year}`);
@@ -320,20 +324,6 @@ function extractDataFromPdfContent(pdfContent) {
  */
 function extractDataFromCreditNote(pdfContent) {
   const data = {};
-  const monthNames = {
-    "janvier": "01",
-    "février": "02",
-    "mars": "03",
-    "avril": "04",
-    "mai": "05",
-    "juin": "06",
-    "juillet": "07",
-    "août": "08",
-    "septembre": "09",
-    "octobre": "10",
-    "novembre": "11",
-    "décembre": "12"
-  };
 
   const clientRegex = new RegExp('(?:' + CLIENT_PREFIXES.join('|') + ')\\s+(.*)', 'i');
   const regexMap = {
@@ -342,6 +332,26 @@ function extractDataFromCreditNote(pdfContent) {
     "Vendeur": /Votre contact\s*:\s*(.*)/,
     "InvoiceDate": /Le\s+(\d{1,2}\s+\w+\s+\d{4})/i,
   };
+
+  const invoiceDateMatch = pdfContent.match(regexMap["InvoiceDate"]);
+  if (invoiceDateMatch && invoiceDateMatch[1]) {
+    const dateStringFr = invoiceDateMatch[1].trim();
+    const parts = dateStringFr.split(' ');
+    if (parts.length === 3) {
+      const day = parts[0];
+      const month = MONTH_NAMES[parts[1].toLowerCase()];
+      const year = parts[2];
+      if (day && month && year) {
+        data["InvoiceDate"] = convertDateToYYYYMMDD(`${day}/${month}/${year}`);
+      } else {
+        data["InvoiceDate"] = dateStringFr;
+      }
+    } else {
+      data["InvoiceDate"] = dateStringFr;
+    }
+  } else {
+    data["InvoiceDate"] = "N/A";
+  }
 
   const summaryRegex = /\b7\s+([\d,.]+?)\s+(-?[\d\s,.]+?)\s+(-?[\d\s,.]+)/;
   const summaryMatch = pdfContent.match(summaryRegex);
@@ -359,6 +369,7 @@ function extractDataFromCreditNote(pdfContent) {
   }
 
   for (const field in regexMap) {
+    if (field === "InvoiceDate") continue;
     const match = pdfContent.match(regexMap[field]);
     if (match && match[1]) {
       data[field] = match[1].trim();
@@ -395,20 +406,6 @@ function extractDataFromCreditNote(pdfContent) {
  */
 function extractDataFromDepositInvoice(pdfContent) {
   const data = {};
-  const monthNames = {
-    "janvier": "01",
-    "février": "02",
-    "mars": "03",
-    "avril": "04",
-    "mai": "05",
-    "juin": "06",
-    "juillet": "07",
-    "août": "08",
-    "septembre": "09",
-    "octobre": "10",
-    "novembre": "11",
-    "décembre": "12"
-  };
 
   const clientRegex = new RegExp('(?:' + CLIENT_PREFIXES.join('|') + ')\\s+(.*)', 'i');
   const regexMap = {
@@ -418,6 +415,26 @@ function extractDataFromDepositInvoice(pdfContent) {
     "Vendeur": /Votre contact\s*:\s*(.*)/,
     "InvoiceDate": /Le\s+(\d{1,2}\s+\w+\s+\d{4})/i,
   };
+
+  const invoiceDateMatch = pdfContent.match(regexMap["InvoiceDate"]);
+  if (invoiceDateMatch && invoiceDateMatch[1]) {
+    const dateStringFr = invoiceDateMatch[1].trim();
+    const parts = dateStringFr.split(' ');
+    if (parts.length === 3) {
+      const day = parts[0];
+      const month = MONTH_NAMES[parts[1].toLowerCase()];
+      const year = parts[2];
+      if (day && month && year) {
+        data["InvoiceDate"] = convertDateToYYYYMMDD(`${day}/${month}/${year}`);
+      } else {
+        data["InvoiceDate"] = dateStringFr;
+      }
+    } else {
+      data["InvoiceDate"] = dateStringFr;
+    }
+  } else {
+    data["InvoiceDate"] = "N/A";
+  }
 
   const htTvaRegex = /MONTANT TOTAL HT\s+MONTANT TVA\s+([\d\s,.]+) €\s+([\d\s,.]+) €/;
   const financialMatch = pdfContent.match(htTvaRegex);
@@ -446,6 +463,7 @@ function extractDataFromDepositInvoice(pdfContent) {
   }
 
   for (const field in regexMap) {
+    if (field === "InvoiceDate") continue;
     const match = pdfContent.match(regexMap[field]);
     if (match && match[1]) {
       let value = match[1].trim();
