@@ -21,6 +21,9 @@ const PAC_KEYWORDS = {
   "Fenêtres": ["FENETRE", "VOLET"]
 };
 
+// Cache of existing invoice numbers for quick lookup.
+const existingInvoiceNumbers = new Set();
+
 // --- Main Processing Function ---
 
 /**
@@ -28,6 +31,7 @@ const PAC_KEYWORDS = {
  */
 function processIncomingInvoices() {
   Logger.log("--- Starting Invoice Processing Run ---");
+  loadExistingInvoiceNumbers();
 
   Logger.log(`Attempting to find Gmail label with name: "${GMAIL_LABEL_TO_PROCESS}"`);
   const label = GmailApp.getUserLabelByName(GMAIL_LABEL_TO_PROCESS);
@@ -145,6 +149,9 @@ function processIncomingInvoices() {
             }
 
             appendToGoogleSheet(messageId, new Date(), extractedData);
+            if (invoiceNumber && invoiceNumber !== 'N/A') {
+              existingInvoiceNumbers.add(invoiceNumber);
+            }
             Drive.Files.remove(convertedDoc.id);
             Drive.Files.remove(pdfFile.getId());
             logIngestionSuccess(messageId, fileName, senderEmail, recipientEmail, messageDate, pdfFile.getId());
@@ -591,21 +598,25 @@ function logIngestionSkipped(messageId, subject, senderEmail, recipientEmail, me
 
 // --- Helper Functions ---
 
+function loadExistingInvoiceNumbers() {
+  existingInvoiceNumbers.clear();
+  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
+  const sheet = spreadsheet.getSheetByName(PROJECTS_SHEET_NAME);
+  if (!sheet) return;
+  const values = sheet.getRange("C2:C").getValues();
+  values.forEach(row => {
+    const num = row[0];
+    if (num && num !== 'N/A') {
+      existingInvoiceNumbers.add(num);
+    }
+  });
+}
+
 /**
  * Checks if an invoice number already exists in the sheet.
  */
 function isDuplicateInvoice(invoiceNumber) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const sheet = spreadsheet.getSheetByName(PROJECTS_SHEET_NAME);
-  if (sheet) {
-    const values = sheet.getRange("C2:C").getValues();
-    for (let i = 0; i < values.length; i++) {
-      if (values[i][0] == invoiceNumber) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return existingInvoiceNumbers.has(invoiceNumber);
 }
 
 /**
