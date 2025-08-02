@@ -20,6 +20,13 @@ const PAC_KEYWORDS = {
   "Portails": ["GARAGE", "PORTAIL"],
   "Fenêtres": ["FENETRE", "VOLET"]
 };
+// Document AI / Vertex AI configuration
+// Make sure the corresponding API is enabled in your Google Cloud project.
+// Values are read from the script properties so credentials aren't hard-coded.
+const scriptProps = PropertiesService.getScriptProperties();
+const AI_PROJECT_ID = scriptProps.getProperty('AI_PROJECT_ID');
+const AI_LOCATION = scriptProps.getProperty('AI_LOCATION'); // e.g. 'eu' or 'us'
+const AI_PROCESSOR_ID = scriptProps.getProperty('AI_PROCESSOR_ID');
 
 // --- Main Processing Function ---
 
@@ -102,30 +109,13 @@ function processIncomingInvoices() {
 
         if (attachmentContentType === MimeType.PDF || (attachmentContentType === 'application/octet-stream' && includesPdf)) {
           pdfFound = true;
+          let pdfFile;
           try {
             const fileName = attachment.getName();
-            const pdfFile = targetFolder.createFile(attachment);
+            pdfFile = targetFolder.createFile(attachment);
+            const pdfBlob = pdfFile.getBlob();
 
-            const convertedDoc = Drive.Files.insert({
-              title: pdfFile.getName() + '_converted',
-              mimeType: MimeType.GOOGLE_DOCS,
-              parents: [{
-                id: targetFolder.getId()
-              }]
-            }, pdfFile.getBlob());
-            Utilities.sleep(2000);
-
-            const doc = DocumentApp.openById(convertedDoc.id);
-            const pdfTextContent = doc.getBody().getText();
-
-            let extractedData;
-            if (documentType === 'invoice') {
-              extractedData = extractDataFromPdfContent(pdfTextContent);
-            } else if (documentType === 'deposit_invoice') {
-              extractedData = extractDataFromDepositInvoice(pdfTextContent);
-            } else { // documentType === 'credit_note'
-              extractedData = extractDataFromCreditNote(pdfTextContent);
-            }
+            const extractedData = parseInvoiceWithAI(pdfBlob, documentType);
             Logger.log(`Parsed data: ${JSON.stringify(extractedData)}`);
 
             const invoiceNumber = extractedData['Numéro facture'];
@@ -139,14 +129,12 @@ function processIncomingInvoices() {
                 thread.addLabel(errorLabel);
                 thread.removeLabel(label);
               }
-              Drive.Files.remove(convertedDoc.id);
-              Drive.Files.remove(pdfFile.getId());
+              if (pdfFile) pdfFile.setTrashed(true);
               return;
             }
 
             appendToGoogleSheet(messageId, new Date(), extractedData);
-            Drive.Files.remove(convertedDoc.id);
-            Drive.Files.remove(pdfFile.getId());
+            if (pdfFile) pdfFile.setTrashed(true);
             logIngestionSuccess(messageId, fileName, senderEmail, recipientEmail, messageDate, pdfFile.getId());
 
             const processedLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_OK);
@@ -164,6 +152,7 @@ function processIncomingInvoices() {
               thread.addLabel(errorLabel);
               thread.removeLabel(label);
             }
+            if (pdfFile) pdfFile.setTrashed(true);
             return;
           }
         }
@@ -694,6 +683,95 @@ function determinePacValue(pdfContent) {
   return "N/A"; // Default value if no keywords are found
 }
 
+/**
+ * Calls Document AI or Vertex AI to extract structured invoice data.
+ */
+function parseInvoiceWithAI(pdfBlob, documentType) {
+  if (!AI_PROJECT_ID || !AI_LOCATION || !AI_PROCESSOR_ID) {
+    Logger.log('AI configuration missing. Set AI_PROJECT_ID, AI_LOCATION, and AI_PROCESSOR_ID in script properties.');
+    return mapAIResponseToData({}, documentType);
+  }
+
+  const url = `https://documentai.googleapis.com/v1/projects/${AI_PROJECT_ID}/locations/${AI_LOCATION}/processors/${AI_PROCESSOR_ID}:process`;
+  const payload = {
+    rawDocument: {
+      content: Utilities.base64Encode(pdfBlob.getBytes()),
+      mimeType: 'application/pdf'
+    }
+  };
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() !== 200) {
+      Logger.log(`AI service error ${response.getResponseCode()}: ${response.getContentText()}`);
+      return mapAIResponseToData({}, documentType);
+    }
+    const aiResponse = JSON.parse(response.getContentText());
+    return mapAIResponseToData(aiResponse, documentType);
+  } catch (e) {
+    Logger.log(`Error calling AI service: ${e.message}`);
+    return mapAIResponseToData({}, documentType);
+  }
+}
+
+/**
+ * Maps the AI response into the format expected by appendToGoogleSheet.
+ */
+function mapAIResponseToData(aiResponse, documentType) {
+  const doc = aiResponse.document || {};
+  const entities = doc.entities || [];
+
+  const getText = type => {
+    const ent = entities.find(e => e.type === type);
+    if (!ent) return 'N/A';
+    if (ent.mentionText) return ent.mentionText;
+    if (ent.normalizedValue && ent.normalizedValue.text) return ent.normalizedValue.text;
+    return 'N/A';
+  };
+
+  const getAmount = type => {
+    const ent = entities.find(e => e.type === type);
+    if (ent && ent.normalizedValue && ent.normalizedValue.moneyValue) {
+      const money = ent.normalizedValue.moneyValue;
+      const units = Number(money.units || 0);
+      const nanos = Number(money.nanos || 0);
+      return (units + nanos / 1e9).toFixed(2);
+    }
+    return 'N/A';
+  };
+
+  const data = {
+    'Numéro facture': getText('invoiceId'),
+    'Client': getText('supplierName'),
+    'TTC': getAmount('totalAmount'),
+    'HT': getAmount('totalNetAmount'),
+    'TVA': getAmount('totalTaxAmount'),
+    'Solde': getAmount('amountDue'),
+    'Mode paiement': getText('paymentTerm'),
+    'Échéance': getText('dueDate'),
+    'Date paiement': getText('paymentDate'),
+    'Taux TVA': getText('totalTaxRate'),
+    'Vendeur': 'N/A',
+    'Acompte': '0.00'
+  };
+
+  if (documentType === 'deposit_invoice') {
+    data['Mode paiement'] = 'Acompte';
+    data['Acompte'] = data['TTC'];
+  } else if (documentType === 'credit_note') {
+    data['Mode paiement'] = 'Avoir';
+  }
+
+  data['PAC'] = determinePacValue(doc.text || '');
+  return data;
+}
 
 // --- Whiteboard Functions (Not related to invoice processing) ---
 
