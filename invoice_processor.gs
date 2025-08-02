@@ -4,14 +4,7 @@
  */
 
 // --- Configuration ---
-const GOOGLE_SHEET_ID = "1QWQS6kwsiFJX9XdDweQBVz1Lef5uR5fJOV4P814rd98";
-const PROJECTS_SHEET_NAME = "Projets";
-const LOGS_SHEET_NAME = "Logs_Ingestion";
-const TARGET_DRIVE_FOLDER_ID = "1TkY23yZdrpCcJKLfxCBOVitQ1Syj3miO";
-const GMAIL_LABEL_TO_PROCESS = "invoices/to-process";
-const GMAIL_LABEL_PROCESSED_OK = "invoices/processed/ok";
-const GMAIL_LABEL_PROCESSED_ERROR = "invoices/processed/error";
-const GMAIL_LABEL_PROCESSED_AUTRES = "invoices/processed/autres";
+let CONFIG; // Loaded at runtime via helper
 // NEW: Central list of client prefixes for easy updating.
 const CLIENT_PREFIXES = ["MR OU MME", "MME", "MR."];
 // NEW: Keywords for PAC identification
@@ -27,22 +20,23 @@ const PAC_KEYWORDS = {
  * Processes incoming emails, categorizes them, extracts data, and logs the activity.
  */
 function processIncomingInvoices() {
+  CONFIG = getConfig();
   Logger.log("--- Starting Invoice Processing Run ---");
 
-  Logger.log(`Attempting to find Gmail label with name: "${GMAIL_LABEL_TO_PROCESS}"`);
-  const label = GmailApp.getUserLabelByName(GMAIL_LABEL_TO_PROCESS);
+  Logger.log(`Attempting to find Gmail label with name: "${CONFIG.GMAIL_LABEL_TO_PROCESS}"`);
+  const label = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_TO_PROCESS);
 
   if (!label) {
-    Logger.log(`CRITICAL ERROR: Gmail label '${GMAIL_LABEL_TO_PROCESS}' not found. Please ensure it exists.`);
+    Logger.log(`CRITICAL ERROR: Gmail label '${CONFIG.GMAIL_LABEL_TO_PROCESS}' not found. Please ensure it exists.`);
     return;
   }
   Logger.log(`SUCCESS: Found the Gmail label object for "${label.getName()}".`);
 
   let targetFolder;
   try {
-    targetFolder = DriveApp.getFolderById(TARGET_DRIVE_FOLDER_ID);
+    targetFolder = DriveApp.getFolderById(CONFIG.TARGET_DRIVE_FOLDER_ID);
   } catch (e) {
-    Logger.log(`Error: Google Drive folder with ID '${TARGET_DRIVE_FOLDER_ID}' not found or inaccessible.`);
+    Logger.log(`Error: Google Drive folder with ID '${CONFIG.TARGET_DRIVE_FOLDER_ID}' not found or inaccessible.`);
     logIngestionError("N/A", "N/A", `Drive folder error: ${e.message}`);
     return;
   }
@@ -82,7 +76,7 @@ function processIncomingInvoices() {
         Logger.log(`Skipping message with non-standard subject: "${subject}"`);
         logIngestionSkipped(messageId, subject, senderEmail, recipientEmail, messageDate);
 
-        const autresLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_AUTRES);
+        const autresLabel = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED_AUTRES);
         if (autresLabel) {
           thread.addLabel(autresLabel);
         }
@@ -134,7 +128,7 @@ function processIncomingInvoices() {
               Logger.log(errorMessage);
               logIngestionError(messageId, fileName, errorMessage, senderEmail, recipientEmail, messageDate);
 
-              const errorLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_ERROR);
+              const errorLabel = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED_ERROR);
               if (errorLabel) {
                 thread.addLabel(errorLabel);
                 thread.removeLabel(label);
@@ -149,7 +143,7 @@ function processIncomingInvoices() {
             Drive.Files.remove(pdfFile.getId());
             logIngestionSuccess(messageId, fileName, senderEmail, recipientEmail, messageDate, pdfFile.getId());
 
-            const processedLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_OK);
+            const processedLabel = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED_OK);
             if (processedLabel) {
               thread.addLabel(processedLabel);
               thread.removeLabel(label);
@@ -159,7 +153,7 @@ function processIncomingInvoices() {
             Logger.log(`Error during PDF processing: ${e.message}`);
             logIngestionError(messageId, attachmentName, `Full PDF processing error: ${e.message}`, senderEmail, recipientEmail, messageDate);
 
-            const errorLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_ERROR);
+            const errorLabel = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED_ERROR);
             if (errorLabel) {
               thread.addLabel(errorLabel);
               thread.removeLabel(label);
@@ -173,7 +167,7 @@ function processIncomingInvoices() {
         Logger.log(`No PDF attachment found in message ID: ${messageId}.`);
         logIngestionError(messageId, "N/A", "No PDF attachment found", senderEmail, recipientEmail, messageDate);
 
-        const errorLabel = GmailApp.getUserLabelByName(GMAIL_LABEL_PROCESSED_ERROR);
+        const errorLabel = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED_ERROR);
         if (errorLabel) {
           thread.addLabel(errorLabel);
           thread.removeLabel(label);
@@ -476,10 +470,10 @@ function extractDataFromDepositInvoice(pdfContent) {
  * Appends the extracted data to the 'Projets' Google Sheet.
  */
 function appendToGoogleSheet(idMessage, date, data) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const sheet = spreadsheet.getSheetByName(PROJECTS_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
+  const sheet = spreadsheet.getSheetByName(CONFIG.PROJECTS_SHEET_NAME);
   if (!sheet) {
-    Logger.log(`Error: '${PROJECTS_SHEET_NAME}' sheet not found.`);
+    Logger.log(`Error: '${CONFIG.PROJECTS_SHEET_NAME}' sheet not found.`);
     return;
   }
 
@@ -541,7 +535,7 @@ function appendToGoogleSheet(idMessage, date, data) {
   ];
 
   sheet.appendRow(rowData);
-  Logger.log(`Row appended to '${PROJECTS_SHEET_NAME}' sheet.`);
+  Logger.log(`Row appended to '${CONFIG.PROJECTS_SHEET_NAME}' sheet.`);
 
   const newRow = sheet.getLastRow();
 
@@ -562,8 +556,8 @@ function appendToGoogleSheet(idMessage, date, data) {
  * Logs successful ingestion to the Logs_Ingestion sheet.
  */
 function logIngestionSuccess(messageId, fileName, senderEmail, recipientEmail, messageDate, driveFileId) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const logSheet = spreadsheet.getSheetByName(LOGS_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
+  const logSheet = spreadsheet.getSheetByName(CONFIG.LOGS_SHEET_NAME);
   if (!logSheet) return;
   logSheet.appendRow([new Date(), messageId, fileName, senderEmail, recipientEmail, Utilities.formatDate(messageDate, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss"), driveFileId, "SUCCESS", ""]);
 }
@@ -572,8 +566,8 @@ function logIngestionSuccess(messageId, fileName, senderEmail, recipientEmail, m
  * Logs ingestion errors to the Logs_Ingestion sheet.
  */
 function logIngestionError(messageId, fileName, errorMessage, senderEmail, recipientEmail, messageDate) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const logSheet = spreadsheet.getSheetByName(LOGS_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
+  const logSheet = spreadsheet.getSheetByName(CONFIG.LOGS_SHEET_NAME);
   if (!logSheet) return;
   logSheet.appendRow([new Date(), messageId, fileName || "N/A", senderEmail || "N/A", recipientEmail || "N/A", messageDate ? Utilities.formatDate(messageDate, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss") : "N/A", "N/A", "ERROR", errorMessage]);
 }
@@ -582,8 +576,8 @@ function logIngestionError(messageId, fileName, errorMessage, senderEmail, recip
  * Logs intentionally skipped emails to the Logs_Ingestion sheet.
  */
 function logIngestionSkipped(messageId, subject, senderEmail, recipientEmail, messageDate) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const logSheet = spreadsheet.getSheetByName(LOGS_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
+  const logSheet = spreadsheet.getSheetByName(CONFIG.LOGS_SHEET_NAME);
   if (!logSheet) return;
   logSheet.appendRow([new Date(), messageId, "N/A", senderEmail, recipientEmail, Utilities.formatDate(messageDate, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss"), "N/A", "SKIPPED", `Subject matched filter: "${subject}"`]);
 }
@@ -595,8 +589,8 @@ function logIngestionSkipped(messageId, subject, senderEmail, recipientEmail, me
  * Checks if an invoice number already exists in the sheet.
  */
 function isDuplicateInvoice(invoiceNumber) {
-  const spreadsheet = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
-  const sheet = spreadsheet.getSheetByName(PROJECTS_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
+  const sheet = spreadsheet.getSheetByName(CONFIG.PROJECTS_SHEET_NAME);
   if (sheet) {
     const values = sheet.getRange("C2:C").getValues();
     for (let i = 0; i < values.length; i++) {
@@ -698,7 +692,7 @@ function determinePacValue(pdfContent) {
 // --- Whiteboard Functions (Not related to invoice processing) ---
 
 function getWhiteboardConfig() {
-  const ss = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
+  const ss = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
   const sheet = ss.getSheetByName("Date affichage");
   if (!sheet) {
     return {
@@ -724,7 +718,7 @@ function getWhiteboardConfig() {
 }
 
 function getAfficheFlag() {
-  const ss = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
+  const ss = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
   const sheet = ss.getSheetByName("Date affichage");
   if (!sheet) {
     return true;
@@ -737,14 +731,14 @@ function getAfficheFlag() {
 }
 
 function fetchSheetData(sheetName) {
-  const ss = SpreadsheetApp.openById(GOOGLE_SHEET_ID);
+  const ss = SpreadsheetApp.openById(CONFIG.GOOGLE_SHEET_ID);
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) throw new Error(`Sheet not found: ${sheetName}`);
   return sheet.getDataRange().getValues();
 }
 
 function getProjects() {
-  const data = fetchSheetData(PROJECTS_SHEET_NAME);
+  const data = fetchSheetData(CONFIG.PROJECTS_SHEET_NAME);
   const headers = data[0];
   const colIndices = {
     date: headers.indexOf('Date'),
@@ -774,7 +768,7 @@ function getProjects() {
 }
 
 function getUniqueSalespeople() {
-  const data = fetchSheetData(PROJECTS_SHEET_NAME);
+  const data = fetchSheetData(CONFIG.PROJECTS_SHEET_NAME);
   const headers = data[0];
   const vendeurIndex = headers.indexOf('Vendeur');
   if (vendeurIndex === -1) {
